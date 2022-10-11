@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trace-load-generator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trace-load-generator
+  template:
+    metadata:
+      labels:
+        app: trace-load-generator
+    spec:
+      containers:
+      - name: trace-load-generator
+        image: docker.io/omnition/synthetic-load-generator:latest
+        env:
+          - name: JAEGER_COLLECTOR_URL
+            value: "http://my-opentelemetry-collector.otel:14268"
+---
