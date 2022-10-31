@@ -12,6 +12,10 @@ spec:
       labels:
         app: trace-load-generator
     spec:
+      volumes:
+        - name: config
+          configMap:
+            name: trace-load-config
       containers:
       - name: trace-load-generator
         image: docker.io/omnition/synthetic-load-generator:latest
@@ -22,4 +26,10 @@ spec:
                 fieldPath: status.hostIP
           - name: JAEGER_COLLECTOR_URL
             value: "http://$(HOST_IP):14268"
+          - name: TOPOLOGY_FILE
+            value: "/topologies/topology.json"
+        volumeMounts:
+          - name: config
+            mountPath: "/topologies/topology.json"
+            subPath: file-from-cfgmap
 ---
