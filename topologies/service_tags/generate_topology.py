@@ -18,9 +18,15 @@ def generateCallGraph(serviceRoutes, numServices, fanOut, maxDepth):
         for (service, routes) in serviceRoutes.items():
             routesJson = []
             for route in routes:
+                clientSpanCallsJson = {}
                 downStreamCallsJson = {}
                 routesGenerated = 0
                 while routesGenerated < fanOut and len(nextLevelRoutes) > 0:
+                    # Create route from server to client span
+                    clientSpanRoute = service + '-route-client'
+                    clientSpanCallsJson[service] = clientSpanRoute
+
+                    # Create route from client span to next service's server span
                     (nextServiceRouteNum, nextServiceNum) = nextLevelRoutes.pop()
                     nextService = 'service-' + str(nextLevel) + '-' + str(nextServiceNum)
                     nextRoute = nextService + '-route-' + str(nextServiceRouteNum)
@@ -29,15 +35,34 @@ def generateCallGraph(serviceRoutes, numServices, fanOut, maxDepth):
                         nextServiceRoutes[nextService] = {}
                     nextServiceRoutes[nextService][nextRoute] = {}
                     routesGenerated += 1
+                # Add route from server to client span
                 routesJson.append(
                     {
                         'route': route,
+                        'downstreamCalls': clientSpanCallsJson,
+                        'maxLatencyMillis': random.randrange(10, 100),
+                        'tagSets': [{
+                            'tags': {
+                                'span.kind': 'server',
+                                'version': 'version-1',
+                            },
+                            "tagGenerators":  [{"numTags":  random.randrange(1, 5), "numVals":  random.randrange(1, 10), "valLength": random.randrange(4, 16)}]
+                        }]
+                    }
+                )
+
+                # Add route route from client span to next service's server span
+                routesJson.append(
+                    {
+                        'route': clientSpanRoute,
                         'downstreamCalls': downStreamCallsJson,
                         'maxLatencyMillis': random.randrange(10, 100),
                         'tagSets': [{
                             'tags': {
+                                'span.kind': 'client',
                                 'version': 'version-1',
-                            }
+                            },
+                            "tagGenerators":  [{"numTags":  random.randrange(1, 5), "numVals":  random.randrange(1, 10), "valLength": random.randrange(4, 16)}]
                         }]
                     }
                 )
@@ -64,8 +89,10 @@ def generateCallGraph(serviceRoutes, numServices, fanOut, maxDepth):
                     'maxLatencyMillis': random.randrange(10, 100),
                     'tagSets': [{
                         'tags': {
+                            'span.kind': 'service',
                             'version': 'version-1',
-                        }
+                        },
+                        "tagGenerators":  [{"numTags":  random.randrange(1, 5), "numVals":  random.randrange(1, 10), "valLength": random.randrange(4, 16)}]
                     }]
                 }
             )
