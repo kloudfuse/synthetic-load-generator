@@ -1,24 +1,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: trace-load-generator
+  name: trace-load-generator-6-22-prod
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: trace-load-generator
+      app: trace-load-generator-6-22-prod
   template:
     metadata:
       labels:
-        app: trace-load-generator
+        app: trace-load-generator-6-22-prod
     spec:
       volumes:
         - name: config
           configMap:
-            name: trace-load-config
+            name: 6-22-prod
       containers:
-      - name: trace-load-generator
-        image: docker.io/omnition/synthetic-load-generator:latest
+      - name: trace-load-generator-6-22-prod
+        image: us.gcr.io/mvp-demo-301906/kfuse/syntheticloadgenerator:latest
         env:
           - name: HOST_IP
             valueFrom:

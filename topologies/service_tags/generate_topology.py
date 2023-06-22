@@ -61,8 +61,9 @@ def generateCallGraph(serviceRoutes, numServices, fanOut, maxDepth):
                             'tags': {
                                 'span.kind': 'client',
                                 'version': 'version-1',
+                                'env': 'prod',
                             },
-                            "tagGenerators":  [{"numTags":  random.randrange(1, 5), "numVals":  random.randrange(1, 10), "valLength": random.randrange(4, 16)}]
+                            "tagGenerators":  [{"numTags":  1, "numVals":  20, "valLength": 8}]
                         }]
                     }
                 )
@@ -91,8 +92,9 @@ def generateCallGraph(serviceRoutes, numServices, fanOut, maxDepth):
                         'tags': {
                             'span.kind': 'service',
                             'version': 'version-1',
+                            'env': 'prod',
                         },
-                        "tagGenerators":  [{"numTags":  random.randrange(1, 5), "numVals":  random.randrange(1, 10), "valLength": random.randrange(4, 16)}]
+                        "tagGenerators":  [{"numTags":  1, "numVals":  20, "valLength": 8}]
                     }]
                 }
             )
@@ -110,10 +112,18 @@ def main():
         "service-0":
             {
                 "route-0": {},
-                "route-1": {}
+                "route-1": {},
+                "route-2": {},
+                "route-3": {},
+                "route-4": {},
+                "route-5": {},
+                "route-6": {},
+                "route-7": {},
+                "route-8": {},
+                "route-9": {}
             },
     }
-    callGraph = generateCallGraph(root, 12, 2, 4)
+    callGraph = generateCallGraph(root, 100, 10, 10)
     topology = {
         'topology': {
             'services': callGraph,
@@ -122,7 +132,7 @@ def main():
             {
                 'service': service,
                 'route': route,
-                'tracesPerHour': random.randrange(100, 10000)
+                'tracesPerHour': 10000
             }
             for (service, routes) in root.items()
             for route in routes
