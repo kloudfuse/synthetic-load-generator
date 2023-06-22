@@ -31,7 +31,10 @@ public class TraceGenerator {
     public static Trace generate(Topology topology, String rootServiceName, String rootRouteName, long startTimeMicros) {
         TraceGenerator gen = new TraceGenerator(topology);
         ServiceTier rootService = gen.topology.getServiceTier(rootServiceName);
+        String instanceName = rootService.instances.get(gen.random.nextInt(rootService.instances.size()));
+        Service service = new Service(rootService.serviceName, instanceName, new ArrayList<>());
         Span rootSpan = gen.createSpanForServiceRouteCall(null, rootService, rootRouteName, startTimeMicros);
+        rootSpan.service = service;
         gen.trace.rootSpan = rootSpan;
         gen.trace.addRefs();
         return gen.trace;
@@ -46,6 +49,11 @@ public class TraceGenerator {
                 random.nextInt(serviceTier.instances.size()));
         ServiceRoute route = serviceTier.getRoute(routeName);
 
+        Span clientSpan = new Span();
+        clientSpan.startTimeMicros = startTimeMicros;
+        clientSpan.operationName = route.route;
+        clientSpan.tags.add(KeyValue.ofStringType("span.kind", "client"));
+
         // send tags of serviceTier and serviceTier instance
         Service service = new Service(serviceTier.serviceName, instanceName, new ArrayList<>());
         Span span = new Span();
@@ -53,6 +61,7 @@ public class TraceGenerator {
         span.operationName = route.route;
         span.service = service;
         span.tags.add(KeyValue.ofLongType("load_generator.seq_num", sequenceNumber.getAndIncrement()));
+        span.tags.add(KeyValue.ofStringType("span.kind", "server"));
 
         // Setup base tags
         span.setHttpMethodTag("GET");
@@ -90,6 +99,7 @@ public class TraceGenerator {
             .filter(Objects::nonNull)
             .collect(Collectors.toList());
         span.tags.addAll(spanTags);
+        clientSpan.tags.addAll(spanTags);
 
         final AtomicLong maxEndTime = new AtomicLong(startTimeMicros);
         if (span.isErrorSpan()) {
@@ -101,6 +111,7 @@ public class TraceGenerator {
                 long childStartTimeMicros = startTimeMicros + TimeUnit.MILLISECONDS.toMicros(random.nextInt(route.maxLatencyMillis));
                 ServiceTier childSvc = this.topology.getServiceTier(s);
                 Span childSpan = createSpanForServiceRouteCall(routeTags, childSvc, r, childStartTimeMicros);
+                childSpan.service = span.service;
                 Reference ref = new Reference(RefType.CHILD_OF, span.id, childSpan.id);
                 childSpan.refs.add(ref);
                 maxEndTime.set(Math.max(maxEndTime.get(), childSpan.endTimeMicros));
@@ -115,7 +126,17 @@ public class TraceGenerator {
         }
         long ownDuration = TimeUnit.MILLISECONDS.toMicros((long)this.random.nextInt(route.maxLatencyMillis));
         span.endTimeMicros = maxEndTime.get() + ownDuration;
+        clientSpan.endTimeMicros = maxEndTime.get() + ownDuration;
+        if (parentTagSet != null) {
+            Reference ref = new Reference(RefType.CHILD_OF, clientSpan.id, span.id);
+            span.refs.add(ref);
+            trace.addSpan(clientSpan);
+        }
         trace.addSpan(span);
-        return span;
+        if (parentTagSet != null) {
+            return clientSpan;
+        } else {
+            return span;
+        }
     }
 }
