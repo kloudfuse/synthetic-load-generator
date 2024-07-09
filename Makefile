@@ -1,5 +1,5 @@
 MAVEN=mvn
-DOCKER_IMAGE?=omnition/synthetic-load-generator
+DOCKER_IMAGE?=us.gcr.io/mvp-demo-301906/kfuse/synthetic-load-generator
 BUILD_NUMBER?=latest
 
 .PHONY: all build publish
@@ -16,5 +16,6 @@ java-jars: # Create jars without running tests.
 .PHONY: docker-build
 docker-build:
 	@echo "\n===== $@ ======"
-	envsubst < Dockerfile | docker build --pull -t ${DOCKER_IMAGE}:${BUILD_NUMBER} -f - .
+	envsubst < Dockerfile | docker build --platform linux/amd64 --pull -t ${DOCKER_IMAGE}:${BUILD_NUMBER} -f - .
+	docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
 
