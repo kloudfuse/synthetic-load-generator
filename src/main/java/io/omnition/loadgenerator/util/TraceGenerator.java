@@ -32,7 +32,7 @@ public class TraceGenerator {
         TraceGenerator gen = new TraceGenerator(topology);
         ServiceTier rootService = gen.topology.getServiceTier(rootServiceName);
         String instanceName = rootService.instances.get(gen.random.nextInt(rootService.instances.size()));
-        Service service = new Service(rootService.serviceName, instanceName, new ArrayList<>());
+        Service service = new Service(rootService.serviceName, instanceName, rootService.getServiceLabels());
         Span rootSpan = gen.createSpanForServiceRouteCall(null, rootService, rootRouteName, endTimeMicros);
         rootSpan.service = service;
         gen.trace.rootSpan = rootSpan;
@@ -54,8 +54,17 @@ public class TraceGenerator {
         clientSpan.operationName = route.route;
         clientSpan.tags.add(KeyValue.ofStringType("span.kind", "client"));
 
+        if (serviceTier.serviceType.equalsIgnoreCase("db") || serviceTier.serviceType.equalsIgnoreCase("external")) {
+            TagSet routeTags = serviceTier.getTagSet(routeName);
+            clientSpan.tags.addAll(getSpanTags(routeTags, parentTagSet));
+            long ownDuration = TimeUnit.MILLISECONDS.toMicros(route.minLatencyMillis) + TimeUnit.MILLISECONDS.toMicros(this.random.nextInt(route.maxLatencyMillis));
+            clientSpan.startTimeMicros = clientSpan.endTimeMicros - ownDuration;
+            trace.addSpan(clientSpan);
+            return clientSpan;
+        }
+
         // send tags of serviceTier and serviceTier instance
-        Service service = new Service(serviceTier.serviceName, instanceName, new ArrayList<>());
+        Service service = new Service(serviceTier.serviceName, instanceName, serviceTier.getServiceLabels());
         Span span = new Span();
         span.endTimeMicros = endTimeMicros;
         span.operationName = route.route;
@@ -68,36 +77,7 @@ public class TraceGenerator {
         span.setHttpUrlTag("http://" + serviceTier.serviceName + routeName);
         // Get additional tags for this route, and update with any inherited tags
         TagSet routeTags = serviceTier.getTagSet(routeName);
-        HashMap<String, Object> tagsToSet = new HashMap<>(routeTags.tags);
-        for (TagGenerator tagGenerator : routeTags.tagGenerators) {
-            tagsToSet.putAll(tagGenerator.generateTags());
-        }
-        if (parentTagSet != null && routeTags.inherit != null) {
-            for (String inheritTagKey : routeTags.inherit) {
-                Object value = parentTagSet.tags.get(inheritTagKey);
-                if (value != null) {
-                    tagsToSet.put(inheritTagKey, value);
-                }
-            }
-        }
-
-        // Set the additional tags on the span
-        List<KeyValue> spanTags = tagsToSet.entrySet().stream()
-            .map(t -> {
-                Object val = t.getValue();
-                if (val instanceof String) {
-                    return KeyValue.ofStringType(t.getKey(), (String) val);
-                }
-                if (val instanceof Double) {
-                    return KeyValue.ofLongType(t.getKey(), ((Double) val).longValue());
-                }
-                if (val instanceof Boolean) {
-                    return KeyValue.ofBooleanType(t.getKey(), (Boolean) val);
-                }
-                return null;
-            })
-            .filter(Objects::nonNull)
-            .collect(Collectors.toList());
+        List<KeyValue> spanTags = getSpanTags(routeTags, parentTagSet);
         span.tags.addAll(spanTags);
         clientSpan.tags.addAll(spanTags);
 
@@ -138,5 +118,37 @@ public class TraceGenerator {
         } else {
             return span;
         }
+    }
+
+    private static List<KeyValue> getSpanTags(TagSet routeTags, TagSet parentTagSet) {
+        HashMap<String, Object> tagsToSet = new HashMap<>(routeTags.tags);
+        for (TagGenerator tagGenerator : routeTags.tagGenerators) {
+            tagsToSet.putAll(tagGenerator.generateTags());
+        }
+        if (parentTagSet != null && routeTags.inherit != null) {
+            for (String inheritTagKey : routeTags.inherit) {
+                Object value = parentTagSet.tags.get(inheritTagKey);
+                if (value != null) {
+                    tagsToSet.put(inheritTagKey, value);
+                }
+            }
+        }
+
+        return tagsToSet.entrySet().stream()
+                .map(t -> {
+                    Object val = t.getValue();
+                    if (val instanceof String) {
+                        return KeyValue.ofStringType(t.getKey(), (String) val);
+                    }
+                    if (val instanceof Double) {
+                        return KeyValue.ofLongType(t.getKey(), ((Double) val).longValue());
+                    }
+                    if (val instanceof Boolean) {
+                        return KeyValue.ofBooleanType(t.getKey(), (Boolean) val);
+                    }
+                    return null;
+                })
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
     }
 }
