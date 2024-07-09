@@ -10,4 +10,5 @@ public class ServiceRoute {
     public Map<String, String> downstreamCalls = new HashMap<>();
     public List<TagSet> tagSets = new ArrayList<>();
     public int maxLatencyMillis;
+    public int minLatencyMillis;
 }

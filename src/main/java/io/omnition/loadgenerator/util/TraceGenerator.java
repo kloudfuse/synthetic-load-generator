@@ -28,12 +28,12 @@ public class TraceGenerator {
 
     private static final AtomicLong sequenceNumber = new AtomicLong(1);
 
-    public static Trace generate(Topology topology, String rootServiceName, String rootRouteName, long startTimeMicros) {
+    public static Trace generate(Topology topology, String rootServiceName, String rootRouteName, long endTimeMicros) {
         TraceGenerator gen = new TraceGenerator(topology);
         ServiceTier rootService = gen.topology.getServiceTier(rootServiceName);
         String instanceName = rootService.instances.get(gen.random.nextInt(rootService.instances.size()));
         Service service = new Service(rootService.serviceName, instanceName, new ArrayList<>());
-        Span rootSpan = gen.createSpanForServiceRouteCall(null, rootService, rootRouteName, startTimeMicros);
+        Span rootSpan = gen.createSpanForServiceRouteCall(null, rootService, rootRouteName, endTimeMicros);
         rootSpan.service = service;
         gen.trace.rootSpan = rootSpan;
         gen.trace.addRefs();
@@ -44,20 +44,20 @@ public class TraceGenerator {
         this.topology = topology;
     }
 
-    private Span createSpanForServiceRouteCall(TagSet parentTagSet, ServiceTier serviceTier, String routeName, long startTimeMicros) {
+    private Span createSpanForServiceRouteCall(TagSet parentTagSet, ServiceTier serviceTier, String routeName, long endTimeMicros) {
         String instanceName = serviceTier.instances.get(
                 random.nextInt(serviceTier.instances.size()));
         ServiceRoute route = serviceTier.getRoute(routeName);
 
         Span clientSpan = new Span();
-        clientSpan.startTimeMicros = startTimeMicros;
+        clientSpan.endTimeMicros = endTimeMicros;
         clientSpan.operationName = route.route;
         clientSpan.tags.add(KeyValue.ofStringType("span.kind", "client"));
 
         // send tags of serviceTier and serviceTier instance
         Service service = new Service(serviceTier.serviceName, instanceName, new ArrayList<>());
         Span span = new Span();
-        span.startTimeMicros = startTimeMicros;
+        span.endTimeMicros = endTimeMicros;
         span.operationName = route.route;
         span.service = service;
         span.tags.add(KeyValue.ofLongType("load_generator.seq_num", sequenceNumber.getAndIncrement()));
@@ -101,20 +101,20 @@ public class TraceGenerator {
         span.tags.addAll(spanTags);
         clientSpan.tags.addAll(spanTags);
 
-        final AtomicLong maxEndTime = new AtomicLong(startTimeMicros);
+        final AtomicLong minStartTime = new AtomicLong(endTimeMicros);
         if (span.isErrorSpan()) {
             // inject root cause error and terminate trace there
             span.markRootCauseError();
         } else {
             // no error, make downstream calls
             route.downstreamCalls.forEach((s, r) -> {
-                long childStartTimeMicros = startTimeMicros + TimeUnit.MILLISECONDS.toMicros(random.nextInt(route.maxLatencyMillis));
+                long childEndTimeMicros = endTimeMicros - TimeUnit.MILLISECONDS.toMicros(random.nextInt(Math.max(route.minLatencyMillis, route.maxLatencyMillis)));
                 ServiceTier childSvc = this.topology.getServiceTier(s);
-                Span childSpan = createSpanForServiceRouteCall(routeTags, childSvc, r, childStartTimeMicros);
+                Span childSpan = createSpanForServiceRouteCall(routeTags, childSvc, r, childEndTimeMicros);
                 childSpan.service = span.service;
                 Reference ref = new Reference(RefType.CHILD_OF, span.id, childSpan.id);
                 childSpan.refs.add(ref);
-                maxEndTime.set(Math.max(maxEndTime.get(), childSpan.endTimeMicros));
+                minStartTime.set(Math.min(minStartTime.get(), childSpan.startTimeMicros));
                 if (childSpan.isErrorSpan()) {
                     Integer httpCode = childSpan.getHttpCode();
                     if (httpCode != null) {
@@ -124,9 +124,9 @@ public class TraceGenerator {
                 }
             });
         }
-        long ownDuration = TimeUnit.MILLISECONDS.toMicros((long)this.random.nextInt(route.maxLatencyMillis));
-        span.endTimeMicros = maxEndTime.get() + ownDuration;
-        clientSpan.endTimeMicros = maxEndTime.get() + ownDuration;
+        long ownDuration = TimeUnit.MILLISECONDS.toMicros(route.minLatencyMillis) + TimeUnit.MILLISECONDS.toMicros(this.random.nextInt(route.maxLatencyMillis));
+        span.startTimeMicros = minStartTime.get() - ownDuration;
+        clientSpan.startTimeMicros = minStartTime.get() - ownDuration;
         if (parentTagSet != null) {
             Reference ref = new Reference(RefType.CHILD_OF, clientSpan.id, span.id);
             span.refs.add(ref);
