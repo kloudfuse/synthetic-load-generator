@@ -13,14 +13,14 @@ spec:
         app: trace-load-generator
     spec:
       volumes:
-        - name: config-1
+        - name: config-gcp-labels
           configMap:
-            name: trace-load-config-1
-        - name: config-2
+            name: trace-load-config-gcp-labels
+        - name: config-aws-labels
           configMap:
-            name: trace-load-config-2
+            name: trace-load-config-aws-labels
       containers:
-      - name: trace-load-generator-1
+      - name: trace-load-generator-gcp-labels
         image: us.gcr.io/mvp-demo-301906/kfuse/synthetic-load-generator:latest
         imagePullPolicy: Always
         env:
@@ -33,10 +33,10 @@ spec:
           - name: TOPOLOGY_FILE
             value: "/topologies/topology.json"
         volumeMounts:
-          - name: config-1
+          - name: config-gcp-labels
             mountPath: "/topologies/topology.json"
             subPath: file-from-cfgmap
-      - name: trace-load-generator-2
+      - name: trace-load-generator-aws-labels
         image: us.gcr.io/mvp-demo-301906/kfuse/synthetic-load-generator:latest
         imagePullPolicy: Always
         env:
@@ -49,7 +49,7 @@ spec:
           - name: TOPOLOGY_FILE
             value: "/topologies/topology.json"
         volumeMounts:
-          - name: config-2
+          - name: config-aws-labels
             mountPath: "/topologies/topology.json"
             subPath: file-from-cfgmap
 ---
