@@ -1,5 +1,6 @@
 package io.omnition.loadgenerator.util;
 
+import java.sql.Timestamp;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -80,8 +81,9 @@ public class ScheduledTraceGenerator {
             String traceId = this.emitter.emit(trace);
 
             if (this.logLevel == LogLevel.Verbose) {
-                logger.info(String.format("Emitted traceId %s for service %s route %s",
-                    traceId, this.service, this.route));
+                logger.info(String.format("Emitted traceId %s for service %s route %s start time %s end time %s",
+                        traceId, this.service, this.route, new Timestamp(TimeUnit.MICROSECONDS.toMillis(trace.rootSpan.startTimeMicros)),
+                        new Timestamp(TimeUnit.MICROSECONDS.toMillis(trace.rootSpan.endTimeMicros))));
             }
             if (this.logLevel != LogLevel.Silent) {
                 this.summaryLogger.logEmit(1, trace.spans.size());

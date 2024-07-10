@@ -18,7 +18,8 @@ spec:
             name: trace-load-config
       containers:
       - name: trace-load-generator
-        image: docker.io/omnition/synthetic-load-generator:latest
+        image: us.gcr.io/mvp-demo-301906/kfuse/synthetic-load-generator:latest
+        imagePullPolicy: Always
         env:
           - name: HOST_IP
             valueFrom:

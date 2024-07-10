@@ -28,12 +28,12 @@ public class TraceGenerator {
 
     private static final AtomicLong sequenceNumber = new AtomicLong(1);
 
-    public static Trace generate(Topology topology, String rootServiceName, String rootRouteName, long startTimeMicros) {
+    public static Trace generate(Topology topology, String rootServiceName, String rootRouteName, long endTimeMicros) {
         TraceGenerator gen = new TraceGenerator(topology);
         ServiceTier rootService = gen.topology.getServiceTier(rootServiceName);
         String instanceName = rootService.instances.get(gen.random.nextInt(rootService.instances.size()));
-        Service service = new Service(rootService.serviceName, instanceName, new ArrayList<>());
-        Span rootSpan = gen.createSpanForServiceRouteCall(null, rootService, rootRouteName, startTimeMicros);
+        Service service = new Service(rootService.serviceName, instanceName, rootService.getServiceLabels());
+        Span rootSpan = gen.createSpanForServiceRouteCall(null, rootService, rootRouteName, endTimeMicros);
         rootSpan.service = service;
         gen.trace.rootSpan = rootSpan;
         gen.trace.addRefs();
@@ -44,20 +44,29 @@ public class TraceGenerator {
         this.topology = topology;
     }
 
-    private Span createSpanForServiceRouteCall(TagSet parentTagSet, ServiceTier serviceTier, String routeName, long startTimeMicros) {
+    private Span createSpanForServiceRouteCall(TagSet parentTagSet, ServiceTier serviceTier, String routeName, long endTimeMicros) {
         String instanceName = serviceTier.instances.get(
                 random.nextInt(serviceTier.instances.size()));
         ServiceRoute route = serviceTier.getRoute(routeName);
 
         Span clientSpan = new Span();
-        clientSpan.startTimeMicros = startTimeMicros;
+        clientSpan.endTimeMicros = endTimeMicros;
         clientSpan.operationName = route.route;
         clientSpan.tags.add(KeyValue.ofStringType("span.kind", "client"));
 
+        if (serviceTier.serviceType.equalsIgnoreCase("db") || serviceTier.serviceType.equalsIgnoreCase("external")) {
+            TagSet routeTags = serviceTier.getTagSet(routeName);
+            clientSpan.tags.addAll(getSpanTags(routeTags, parentTagSet));
+            long ownDuration = TimeUnit.MILLISECONDS.toMicros(route.minLatencyMillis) + TimeUnit.MILLISECONDS.toMicros(this.random.nextInt(route.maxLatencyMillis));
+            clientSpan.startTimeMicros = clientSpan.endTimeMicros - ownDuration;
+            trace.addSpan(clientSpan);
+            return clientSpan;
+        }
+
         // send tags of serviceTier and serviceTier instance
-        Service service = new Service(serviceTier.serviceName, instanceName, new ArrayList<>());
+        Service service = new Service(serviceTier.serviceName, instanceName, serviceTier.getServiceLabels());
         Span span = new Span();
-        span.startTimeMicros = startTimeMicros;
+        span.endTimeMicros = endTimeMicros;
         span.operationName = route.route;
         span.service = service;
         span.tags.add(KeyValue.ofLongType("load_generator.seq_num", sequenceNumber.getAndIncrement()));
@@ -68,6 +77,50 @@ public class TraceGenerator {
         span.setHttpUrlTag("http://" + serviceTier.serviceName + routeName);
         // Get additional tags for this route, and update with any inherited tags
         TagSet routeTags = serviceTier.getTagSet(routeName);
+        List<KeyValue> spanTags = getSpanTags(routeTags, parentTagSet);
+        span.tags.addAll(spanTags);
+        clientSpan.tags.addAll(spanTags);
+
+        final AtomicLong minStartTime = new AtomicLong(endTimeMicros);
+        if (span.isErrorSpan()) {
+            // inject root cause error and terminate trace there
+            span.markRootCauseError();
+        } else {
+            // no error, make downstream calls
+            route.downstreamCalls.forEach((s, r) -> {
+                long childEndTimeMicros = endTimeMicros - TimeUnit.MILLISECONDS.toMicros(random.nextInt(Math.max(route.minLatencyMillis, route.maxLatencyMillis)));
+                ServiceTier childSvc = this.topology.getServiceTier(s);
+                Span childSpan = createSpanForServiceRouteCall(routeTags, childSvc, r, childEndTimeMicros);
+                childSpan.service = span.service;
+                Reference ref = new Reference(RefType.CHILD_OF, span.id, childSpan.id);
+                childSpan.refs.add(ref);
+                minStartTime.set(Math.min(minStartTime.get(), childSpan.startTimeMicros));
+                if (childSpan.isErrorSpan()) {
+                    Integer httpCode = childSpan.getHttpCode();
+                    if (httpCode != null) {
+                        span.setHttpCode(httpCode);
+                    }
+                    span.markError();
+                }
+            });
+        }
+        long ownDuration = TimeUnit.MILLISECONDS.toMicros(route.minLatencyMillis) + TimeUnit.MILLISECONDS.toMicros(this.random.nextInt(route.maxLatencyMillis));
+        span.startTimeMicros = minStartTime.get() - ownDuration;
+        clientSpan.startTimeMicros = minStartTime.get() - ownDuration;
+        if (parentTagSet != null) {
+            Reference ref = new Reference(RefType.CHILD_OF, clientSpan.id, span.id);
+            span.refs.add(ref);
+            trace.addSpan(clientSpan);
+        }
+        trace.addSpan(span);
+        if (parentTagSet != null) {
+            return clientSpan;
+        } else {
+            return span;
+        }
+    }
+
+    private static List<KeyValue> getSpanTags(TagSet routeTags, TagSet parentTagSet) {
         HashMap<String, Object> tagsToSet = new HashMap<>(routeTags.tags);
         for (TagGenerator tagGenerator : routeTags.tagGenerators) {
             tagsToSet.putAll(tagGenerator.generateTags());
@@ -81,62 +134,21 @@ public class TraceGenerator {
             }
         }
 
-        // Set the additional tags on the span
-        List<KeyValue> spanTags = tagsToSet.entrySet().stream()
-            .map(t -> {
-                Object val = t.getValue();
-                if (val instanceof String) {
-                    return KeyValue.ofStringType(t.getKey(), (String) val);
-                }
-                if (val instanceof Double) {
-                    return KeyValue.ofLongType(t.getKey(), ((Double) val).longValue());
-                }
-                if (val instanceof Boolean) {
-                    return KeyValue.ofBooleanType(t.getKey(), (Boolean) val);
-                }
-                return null;
-            })
-            .filter(Objects::nonNull)
-            .collect(Collectors.toList());
-        span.tags.addAll(spanTags);
-        clientSpan.tags.addAll(spanTags);
-
-        final AtomicLong maxEndTime = new AtomicLong(startTimeMicros);
-        if (span.isErrorSpan()) {
-            // inject root cause error and terminate trace there
-            span.markRootCauseError();
-        } else {
-            // no error, make downstream calls
-            route.downstreamCalls.forEach((s, r) -> {
-                long childStartTimeMicros = startTimeMicros + TimeUnit.MILLISECONDS.toMicros(random.nextInt(route.maxLatencyMillis));
-                ServiceTier childSvc = this.topology.getServiceTier(s);
-                Span childSpan = createSpanForServiceRouteCall(routeTags, childSvc, r, childStartTimeMicros);
-                childSpan.service = span.service;
-                Reference ref = new Reference(RefType.CHILD_OF, span.id, childSpan.id);
-                childSpan.refs.add(ref);
-                maxEndTime.set(Math.max(maxEndTime.get(), childSpan.endTimeMicros));
-                if (childSpan.isErrorSpan()) {
-                    Integer httpCode = childSpan.getHttpCode();
-                    if (httpCode != null) {
-                        span.setHttpCode(httpCode);
+        return tagsToSet.entrySet().stream()
+                .map(t -> {
+                    Object val = t.getValue();
+                    if (val instanceof String) {
+                        return KeyValue.ofStringType(t.getKey(), (String) val);
                     }
-                    span.markError();
-                }
-            });
-        }
-        long ownDuration = TimeUnit.MILLISECONDS.toMicros((long)this.random.nextInt(route.maxLatencyMillis));
-        span.endTimeMicros = maxEndTime.get() + ownDuration;
-        clientSpan.endTimeMicros = maxEndTime.get() + ownDuration;
-        if (parentTagSet != null) {
-            Reference ref = new Reference(RefType.CHILD_OF, clientSpan.id, span.id);
-            span.refs.add(ref);
-            trace.addSpan(clientSpan);
-        }
-        trace.addSpan(span);
-        if (parentTagSet != null) {
-            return clientSpan;
-        } else {
-            return span;
-        }
+                    if (val instanceof Double) {
+                        return KeyValue.ofLongType(t.getKey(), ((Double) val).longValue());
+                    }
+                    if (val instanceof Boolean) {
+                        return KeyValue.ofBooleanType(t.getKey(), (Boolean) val);
+                    }
+                    return null;
+                })
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
     }
 }
