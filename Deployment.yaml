@@ -13,11 +13,14 @@ spec:
         app: trace-load-generator
     spec:
       volumes:
-        - name: config
+        - name: config-1
           configMap:
-            name: trace-load-config
+            name: trace-load-config-1
+        - name: config-2
+          configMap:
+            name: trace-load-config-2
       containers:
-      - name: trace-load-generator
+      - name: trace-load-generator-1
         image: us.gcr.io/mvp-demo-301906/kfuse/synthetic-load-generator:latest
         imagePullPolicy: Always
         env:
@@ -30,7 +33,23 @@ spec:
           - name: TOPOLOGY_FILE
             value: "/topologies/topology.json"
         volumeMounts:
-          - name: config
+          - name: config-1
+            mountPath: "/topologies/topology.json"
+            subPath: file-from-cfgmap
+      - name: trace-load-generator-2
+        image: us.gcr.io/mvp-demo-301906/kfuse/synthetic-load-generator:latest
+        imagePullPolicy: Always
+        env:
+          - name: HOST_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.hostIP
+          - name: JAEGER_COLLECTOR_URL
+            value: "http://$(HOST_IP):14268"
+          - name: TOPOLOGY_FILE
+            value: "/topologies/topology.json"
+        volumeMounts:
+          - name: config-2
             mountPath: "/topologies/topology.json"
             subPath: file-from-cfgmap
 ---
